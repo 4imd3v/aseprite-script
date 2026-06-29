@@ -66,15 +66,11 @@ end
 local function HideLayers(root_layer, data)
     data = data or {}
     for _, layer in ipairs(root_layer.layers) do
-        data[layer] = layer.isVisible
+        data[layer.id] = layer.isVisible
         layer.isVisible = false
         if layer.isGroup then HideLayers(layer, data) end
     end
     return data
-end
-
-local function RestoreLayersVisibility(_, data)
-    for layer, visible in pairs(data) do layer.isVisible = visible end
 end
 
 -- Variable to keep track of the number of layers exported.
@@ -107,7 +103,7 @@ end
 local function exportLayers(sprite, root_layer, filename, group_sep, data, state, parent_visible)
     for _, layer in ipairs(root_layer.layers) do
         local filename = filename
-        local originally_visible = parent_visible and state.visibility[layer]
+        local originally_visible = parent_visible and state.visibility[layer.id]
         if layer.isGroup then
             -- Recursive for groups.
             local previousVisibility = layer.isVisible
@@ -261,7 +257,7 @@ dlg:check{
 dlg:check{
     id = "exportEmpty",
     label = "Export empty layers:",
-    selected = false
+    selected = true
 }
 dlg:check{
     id = "includeHidden",
@@ -359,7 +355,6 @@ local ok, err = pcall(function()
     }, true)
 end)
 if workSprite then
-    if layers_visibility_data then RestoreLayersVisibility(workSprite, layers_visibility_data) end
     workSprite:close()
 end
 if not ok then
