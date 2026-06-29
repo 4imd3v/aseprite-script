@@ -1,5 +1,10 @@
 # Aseprite Export Layers Script
 
+This repo contains two Aseprite export scripts:
+
+- `export_layers.lua`: exports static layer images.
+- `export_animation.lua`: exports animation files, frame sequences, or spritesheets.
+
 `export_layers.lua` exports each layer in the active Aseprite sprite as its own file. It supports nested layer groups, custom filename patterns, custom export extensions, optional trimming, optional spritesheet export, duplicate filename protection, and hidden/empty layer controls.
 
 ## Requirements
@@ -12,9 +17,9 @@
 
 1. Open Aseprite.
 2. Go to `File > Scripts > Open Scripts Folder`.
-3. Copy `export_layers.lua` into that folder.
+3. Copy `export_layers.lua` and/or `export_animation.lua` into that folder.
 4. Go to `File > Scripts > Rescan Scripts Folder`.
-5. Run it from `File > Scripts > export_layers`.
+5. Run it from `File > Scripts > export_layers` or `File > Scripts > export_animation`.
 
 On Windows the scripts folder is usually similar to:
 
@@ -193,3 +198,39 @@ This avoids accidental overwrites.
 - The export count is the number of files the script attempted to export successfully.
 - Security prompts from Aseprite are normal when a script writes files. Grant access if the output path is correct.
 
+## Animation Export Script
+
+Use `export_animation.lua` when you want animation output instead of one static image per layer.
+
+It supports three output modes:
+
+- `Frame sequence`: exports one file per frame, e.g. `sprite_animation_0001.png`.
+- `Animated file`: exports one animated file. Use `gif`, `webp`, `aseprite`, or `ase`.
+- `Spritesheet`: exports frames into a sheet. Use image formats like `png`, `gif`, `webp`, `bmp`, or `tga`.
+
+It supports two scopes:
+
+- `Whole sprite`: exports the full visible animation.
+- `Each layer`: bulk exports one animation per layer.
+
+Filename tokens:
+
+- `{spritename}`: active sprite filename without extension.
+- `{layername}`: layer name, or `animation` for whole-sprite export.
+- `{frame}`: padded frame number, used for frame sequences.
+
+Example frame sequence pattern:
+
+```text
+{spritename}_{layername}_{frame}
+```
+
+Useful settings:
+
+- `Frame digits`: controls frame padding, e.g. `0001`.
+- `Export Scale`: scales a temporary duplicate before export.
+- `Include hidden layers`: includes layers that were hidden before export.
+- `Export empty layers`: includes layers with no cels/content.
+- `Split tags in spritesheet`: asks Aseprite to split tags in spritesheet mode.
+
+The animation script also exports from a temporary duplicate, so your original open sprite is not modified.
