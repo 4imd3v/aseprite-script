@@ -63,6 +63,33 @@ local function IsSpritesheetFormat(format)
            format == "tga"
 end
 
+local function JsonString(value)
+    value = tostring(value or "")
+    value = value:gsub('\\', '\\\\'):gsub('"', '\\"'):gsub('\n', '\\n'):gsub('\r', '\\r'):gsub('\t', '\\t')
+    return '"' .. value .. '"'
+end
+
+local function WriteManifest(filename, entries)
+    local file = io.open(filename, "w")
+    if not file then error("Could not write manifest: " .. filename) end
+    file:write("{\n  \"files\": [\n")
+    for i, entry in ipairs(entries) do
+        file:write("    " .. entry .. (i < #entries and "," or "") .. "\n")
+    end
+    file:write("  ]\n}\n")
+    file:close()
+end
+
+local function IsLocked(layer)
+    local ok, editable = pcall(function() return layer.isEditable end)
+    return ok and editable == false
+end
+
+local function BoundsJson(bounds)
+    if not bounds then return "null" end
+    return string.format('{"x":%d,"y":%d,"width":%d,"height":%d}', bounds.x, bounds.y, bounds.width, bounds.height)
+end
+
 local function HideLayers(root_layer, data)
     data = data or {}
     for _, layer in ipairs(root_layer.layers) do
@@ -100,22 +127,26 @@ local function calculateBoundingBox(layer)
 end
 
 -- Exports every layer individually.
-local function exportLayers(sprite, root_layer, filename, group_sep, data, state, parent_visible)
+local function exportLayers(sprite, root_layer, filename, group_sep, data, state, parent_visible, parent_locked, group_path)
+    group_path = group_path or ""
     for _, layer in ipairs(root_layer.layers) do
         local filename = filename
         local originally_visible = parent_visible and state.visibility[layer.id]
+        local locked = parent_locked or IsLocked(layer)
         if layer.isGroup then
             -- Recursive for groups.
             local previousVisibility = layer.isVisible
             layer.isVisible = true
+            local safe_group = SafeFilename(layer.name)
             filename = filename:gsub("{layergroups}", function()
-                return SafeFilename(layer.name) .. group_sep .. "{layergroups}"
+                return safe_group .. group_sep .. "{layergroups}"
             end)
-            exportLayers(sprite, layer, filename, group_sep, data, state, originally_visible)
+            exportLayers(sprite, layer, filename, group_sep, data, state, originally_visible, locked, group_path .. safe_group .. group_sep)
             layer.isVisible = previousVisibility
         else
             local bounds = calculateBoundingBox(layer)
             local should_export = (data.includeHidden or originally_visible) and
+                                  (data.includeLocked or not locked) and
                                   (data.exportEmpty or bounds)
 
             if should_export then
@@ -189,7 +220,13 @@ local function exportLayers(sprite, root_layer, filename, group_sep, data, state
                     sprite:saveCopyAs(filename)
                 end
                 layer.isVisible = false
-                if exported then n_layers = n_layers + 1 end
+                if exported then
+                    n_layers = n_layers + 1
+                    state.manifest[#state.manifest + 1] = string.format(
+                        '{"file":%s,"layer":%s,"group":%s,"visible":%s,"locked":%s,"empty":%s,"bounds":%s}',
+                        JsonString(filename), JsonString(layer.name), JsonString(group_path), tostring(originally_visible), tostring(locked), tostring(bounds == nil), BoundsJson(bounds)
+                    )
+                end
             end
         end
     end
@@ -263,6 +300,11 @@ dlg:check{
     id = "includeHidden",
     label = "Include hidden layers:",
     selected = false
+}
+dlg:check{
+    id = "includeLocked",
+    label = "Include locked layers/groups:",
+    selected = true
 }
 dlg:check{
     id = "trimSprite",
@@ -345,14 +387,17 @@ end
 -- Finally, perform everything.
 local workSprite = nil
 local layers_visibility_data = nil
+local manifest_entries = {}
 local ok, err = pcall(function()
     workSprite = Sprite(sourceSprite)
     layers_visibility_data = HideLayers(workSprite)
     workSprite:resize(workSprite.width * dlg.data.scale, workSprite.height * dlg.data.scale)
     exportLayers(workSprite, workSprite, app.fs.joinPath(output_path, filename), group_sep, dlg.data, {
         visibility = layers_visibility_data,
-        used_filenames = {}
-    }, true)
+        used_filenames = {},
+        manifest = manifest_entries
+    }, true, false, "")
+    WriteManifest(UniqueFilename(app.fs.joinPath(output_path, "manifest.json"), {}), manifest_entries)
 end)
 if workSprite then
     workSprite:close()

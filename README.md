@@ -171,6 +171,12 @@ When off, only originally visible layers are exported. Layers inside hidden grou
 
 When on, hidden layers are also exported.
 
+### Include locked layers/groups
+
+Default: on.
+
+When off, locked layers and layers inside locked groups are skipped.
+
 ### Save sprite
 
 Default: off.
@@ -178,6 +184,13 @@ Default: off.
 When on, the original active sprite is saved after export using its current filename.
 
 The export itself still happens from a temporary duplicate.
+
+## Export Manifest
+
+Every export writes a duplicate-safe `manifest.json` in the output folder.
+
+Layer exports include file path, layer name, group path, visibility, locked state, empty state, and bounds.
+Animation exports include file path, layer name, frame/tag metadata, locked state, and output mode.
 
 ## Duplicate Filenames
 
@@ -227,9 +240,11 @@ Example frame sequence pattern:
 
 Useful settings:
 
+- `Tag`: exports all frames or only one selected animation tag.
 - `Frame digits`: controls frame padding, e.g. `0001`.
 - `Export Scale`: scales a temporary duplicate before export.
 - `Include hidden layers`: includes layers that were hidden before export.
+- `Include locked layers/groups`: includes locked layers and layers inside locked groups.
 - `Export empty layers`: includes layers with no cels/content.
 - `Split tags in spritesheet`: asks Aseprite to split tags in spritesheet mode.
 

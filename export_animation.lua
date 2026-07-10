@@ -48,13 +48,45 @@ local function Pad(value, width)
     return string.format("%0" .. width .. "d", value)
 end
 
-local function WalkLayers(root_layer, parent_visible, callback)
+local function JsonString(value)
+    value = tostring(value or "")
+    value = value:gsub('\\', '\\\\'):gsub('"', '\\"'):gsub('\n', '\\n'):gsub('\r', '\\r'):gsub('\t', '\\t')
+    return '"' .. value .. '"'
+end
+
+local function WriteManifest(filename, entries)
+    local file = io.open(filename, "w")
+    if not file then error("Could not write manifest: " .. filename) end
+    file:write("{\n  \"files\": [\n")
+    for i, entry in ipairs(entries) do
+        file:write("    " .. entry .. (i < #entries and "," or "") .. "\n")
+    end
+    file:write("  ]\n}\n")
+    file:close()
+end
+
+local function IsLocked(layer)
+    local ok, editable = pcall(function() return layer.isEditable end)
+    return ok and editable == false
+end
+
+local function FrameTagName(sprite, frame_index)
+    for _, tag in ipairs(sprite.tags) do
+        if frame_index >= tag.fromFrame.frameNumber and frame_index <= tag.toFrame.frameNumber then
+            return tag.name
+        end
+    end
+    return ""
+end
+
+local function WalkLayers(root_layer, parent_visible, parent_locked, callback)
     for _, layer in ipairs(root_layer.layers) do
         local visible = parent_visible and layer.isVisible
+        local locked = parent_locked or IsLocked(layer)
         if layer.isGroup then
-            WalkLayers(layer, visible, callback)
+            WalkLayers(layer, visible, locked, callback)
         else
-            callback(layer, visible)
+            callback(layer, visible, locked)
         end
     end
 end
@@ -72,6 +104,36 @@ end
 
 local function LayerHasCels(layer)
     return #layer.cels > 0
+end
+
+local function TagOptions(sprite)
+    local options = {"All tags/frames"}
+    for _, tag in ipairs(sprite.tags) do
+        options[#options + 1] = tag.name
+    end
+    return options
+end
+
+local function SelectedTag(sprite, name)
+    if name == "All tags/frames" then return nil end
+    for _, tag in ipairs(sprite.tags) do
+        if tag.name == name then return tag end
+    end
+    return nil
+end
+
+local function FrameRange(sprite, tag)
+    if tag then return tag.fromFrame.frameNumber, tag.toFrame.frameNumber end
+    return 1, #sprite.frames
+end
+
+local function KeepFrameRange(sprite, first_frame, last_frame)
+    for i = #sprite.frames, last_frame + 1, -1 do
+        sprite:deleteFrame(sprite.frames[i])
+    end
+    for i = first_frame - 1, 1, -1 do
+        sprite:deleteFrame(sprite.frames[i])
+    end
 end
 
 local function BuildFilename(pattern, format, tokens)
@@ -152,9 +214,16 @@ dlg:combobox{
     option = "Horizontal",
     options = {"Horizontal", "Rows", "Columns"}
 }
+dlg:combobox{
+    id = "tag",
+    label = "Tag:",
+    option = "All tags/frames",
+    options = TagOptions(sourceSprite)
+}
 dlg:slider{id = "frameDigits", label = "Frame digits:", min = 1, max = 6, value = 4}
 dlg:slider{id = "scale", label = "Export Scale:", min = 1, max = 10, value = 1}
 dlg:check{id = "includeHidden", label = "Include hidden layers:", selected = false}
+dlg:check{id = "includeLocked", label = "Include locked layers/groups:", selected = true}
 dlg:check{id = "exportEmpty", label = "Export empty layers:", selected = true}
 dlg:check{id = "splitTags", label = "Split tags in spritesheet:", selected = false}
 dlg:button{id = "ok", text = "Export"}
@@ -191,6 +260,7 @@ end
 
 local spritename = SafeFilename(app.fs.fileTitle(app.fs.fileName(sourceSprite.filename)), "sprite")
 local used_filenames = {}
+local manifest_entries = {}
 local exported = 0
 local workSprite = nil
 
@@ -198,13 +268,22 @@ local ok, err = pcall(function()
     workSprite = Sprite(sourceSprite)
     workSprite:resize(workSprite.width * dlg.data.scale, workSprite.height * dlg.data.scale)
 
+    local selected_tag = SelectedTag(workSprite, dlg.data.tag)
+    local first_frame, last_frame = FrameRange(workSprite, selected_tag)
+    local manifest_first_frame = first_frame
+    local manifest_last_frame = last_frame
+    if selected_tag and dlg.data.mode ~= "Frame sequence" then
+        KeepFrameRange(workSprite, first_frame, last_frame)
+        first_frame, last_frame = 1, #workSprite.frames
+    end
+
     local targets = {}
     if dlg.data.scope == "Whole sprite" then
-        targets[1] = {sprite=workSprite, layername="animation"}
+        targets[1] = {sprite=workSprite, layername="animation", locked=false}
     else
-        WalkLayers(workSprite, true, function(layer, visible)
-            if (dlg.data.includeHidden or visible) and (dlg.data.exportEmpty or LayerHasCels(layer)) then
-                targets[#targets + 1] = {layer=layer, layername=SafeFilename(layer.name)}
+        WalkLayers(workSprite, true, false, function(layer, visible, locked)
+            if (dlg.data.includeHidden or visible) and (dlg.data.includeLocked or not locked) and (dlg.data.exportEmpty or LayerHasCels(layer)) then
+                targets[#targets + 1] = {layer=layer, layername=SafeFilename(layer.name), locked=locked}
             end
         end)
     end
@@ -216,7 +295,8 @@ local ok, err = pcall(function()
         end
 
         if dlg.data.mode == "Frame sequence" then
-            for frame_index = 1, #workSprite.frames do
+            for frame_index = first_frame, last_frame do
+                local tag_name = FrameTagName(workSprite, frame_index)
                 local name = BuildFilename(dlg.data.filename, format, {
                     spritename=spritename,
                     layername=target.layername,
@@ -224,6 +304,10 @@ local ok, err = pcall(function()
                 })
                 local filename = UniqueFilename(app.fs.joinPath(output_path, name), used_filenames)
                 SaveOneFrame(workSprite, frame_index, filename)
+                manifest_entries[#manifest_entries + 1] = string.format(
+                    '{"file":%s,"layer":%s,"frame":%d,"duration":%s,"tag":%s,"locked":%s}',
+                    JsonString(filename), JsonString(target.layername), frame_index, tostring(workSprite.frames[frame_index].duration), JsonString(tag_name), tostring(target.locked)
+                )
                 exported = exported + 1
             end
         else
@@ -238,9 +322,14 @@ local ok, err = pcall(function()
             else
                 ExportSpritesheet(workSprite, filename, sheettype, dlg.data.splitTags)
             end
+            manifest_entries[#manifest_entries + 1] = string.format(
+                '{"file":%s,"layer":%s,"firstFrame":%d,"lastFrame":%d,"tag":%s,"locked":%s,"mode":%s}',
+                JsonString(filename), JsonString(target.layername), manifest_first_frame, manifest_last_frame, JsonString(selected_tag and selected_tag.name or ""), tostring(target.locked), JsonString(dlg.data.mode)
+            )
             exported = exported + 1
         end
     end
+    WriteManifest(UniqueFilename(app.fs.joinPath(output_path, "manifest.json"), {}), manifest_entries)
 end)
 
 if workSprite then workSprite:close() end
